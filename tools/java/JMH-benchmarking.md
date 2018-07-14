@@ -60,7 +60,7 @@ public class NumberTestBenchmark {
 }
 ```
 
-此时就可以来执行了这个benchmark了。简单的执行方式就是安装JMH插件，然后像执行单元测试那样执行benchmark。（后续将详细介绍[benchmark的启动方式](#benchmark的启动方式)）执行结果如下：
+此时就可以来执行了这个benchmark了。简单的执行方式就是安装JMH插件，然后像执行单元测试那样执行benchmark。（后续将详细介绍[benchmark启动方式](#benchmark启动方式)）执行结果如下：
 
 
 ```
@@ -208,6 +208,4 @@ benchmark方法支持的参数有两类，JMH内部自定类型的参数（比�
     ```
 2. 安装JMH插件，此时在IDE中就可以像执行单元测试那样执行这个Benchmark。
 3. 先用maven打包，然后用`java -jar benchmarks.jar`的方式执行这些测试用例。
-
-出于便利的考虑，我们这里先用插件方式在IDE中启动测试。真实进行性能测试的时候，我们将使用第3种方法，并在一个没有太多干扰的环境中执行。后续我们将详细介绍[benchmarks的启动方式](#benchmarks的启动方式)
 
