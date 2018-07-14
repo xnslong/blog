@@ -1,2 +1,2 @@
 * [Home](/)
-* [Tools](/docs/tools/)
+* [Tools](/tools/)
