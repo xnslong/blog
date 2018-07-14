@@ -1,2 +1,2 @@
-* [JMH benchmarking](JMH-benchmarking.md)
-* [Guide](guide.md)
+* Tools
+    * [JMH benchmarking](/docs/tools/JMH-benchmarking.md)
