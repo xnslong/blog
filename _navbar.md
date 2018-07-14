@@ -1,3 +1,2 @@
 * [Home](/)
-* [Anything](/anything)
-* [Java](/java)
+* [Tools](/docs/tools/)
