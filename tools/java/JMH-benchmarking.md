@@ -137,10 +137,10 @@ NumberTestBenchmark.isNumber  thrpt   20  101670189.150 ± 1728020.035  ops/s
 
 ## benchmark方法参数
 
-前面我们看到的JMH的benchmark方法是无参的，其实它是可以支持参数的。不过它对参数有要求，必需是JMH内部自定类型的参数注有`@State`注解类型的参数和一个JMH内部参数。
+前面我们看到的JMH的benchmark方法是无参的，其实它是可以支持参数的。不过它对参数有要求，必需是注有`@State`注解类型的实例或者JMH内部参数。
 
 
-### 带有`@State`注解的参数
+### 带有`@State`注解的自定义类型
 
 如果需要使用我们自定义的类型作为参数，那我们需要在这个类型上加上`@State`注解
 
@@ -149,12 +149,12 @@ NumberTestBenchmark.isNumber  thrpt   20  101670189.150 ± 1728020.035  ops/s
 @State(Scope.XXXX)
 ```
 
-只有带有这个注解，JMH才能知道需要什么时候创建一个这类的实例，执行时怎么传给benchmark方法。它有3个值
+当我们自定义的类型带有这个注解，JMH就知道需要什么时候创建一个这类的实例，执行时对benchmark方法的各次调用怎么共享这个实例。`Scope`有3个值
 
-* `Scope.BENCHMARK`它是为整个bencharm只创建一个实例，然后所有线程执行benchmark方法时，都使用同一个实例做为参数。比如我们需要压测多线程共同操作`AtomicInteger`的性能，这时我们就会使用`Scope.BENCHMARK`，如下：
+* `Scope.Benchmark`它是为整个bencharm只创建一个实例，然后所有线程执行benchmark方法时，都使用同一个实例做为参数。比如我们需要压测多线程共同操作`AtomicInteger`的性能，这时我们就会使用`Scope.Benchmark`，如下：
     
     ```java
-    @State(Scope.BENCHMARK)
+    @State(Scope.Benchmark)
     public static class AtomicIntegerProvider {
         AtomicInteger integer = new AtomicInteger();
     }
@@ -165,26 +165,46 @@ NumberTestBenchmark.isNumber  thrpt   20  101670189.150 ± 1728020.035  ops/s
     }
     ```
     
-* `Scope.GROUP`
-* `Scope.THREAD`
+* `Scope.Thread`它会为每个线程创建一个实例，比如当我们需要测一没`AtomicInteger`在没有竞争的时候的性能，这时我们就会用`Scope.Thread`为每个线程创建一个`AtomicInteger`
+    
+    ```java
+    @State(Scope.Thread)
+    public static class AtomicIntegerProvider {
+        AtomicInteger integer = new AtomicInteger();
+    }
+    
+    @Benchmark
+    public void singleThreadIncrAtomicInteger(AtomicIntegerProvider provider) {
+        provider.integer.incrementAndGet();
+    }
+    ```
+    
+    有时候用`Scope.Thread`这种定义，是因为被定义的东西就是不同被多线程同时访问的，它们会有并发问题，会导致结果的不正确，比如`DateFormat`，`Random`, `StringBuilder`这些，还有一些连接类型，比如`Jedis`, `javax.sql.Connection`等。这时如果需要通过他们进行某种测试的话，我们也就会`Scope.Thread`这种定义。
+    
+* `Scope.Group`
 
-但是大多数时候，一个压测任务都不是像上面所展示的那样简单，比如我们需要测一个HTTP接口的性能，那么我们需要做的工作有
+### 自定义类的`@Setup`与`@TearDown`
 
-1. 创建一个合适的`HTTP client`对象
+带有`@State`注解的类型中的方法可以加`@Setup`和`@TearDown`注解，它们的功能与`JUnit`中的`Before`和`After`很像，会在测试任务执行前后执行。
+
+大多数时候，压测任务都不是像前面展示的那样简单，比如我们需要测一个HTTP接口的性能，那么我们需要：
+
+1. 初始化一个合适的`HTTP client`（创建对象，配置参数等等）
 2. 使用这个`client`发HTTP请求，测执行请求的吞吐量和响应时间
+3. 清理资源
 
-这个时候`HTTP Client`的创建与初始化操作就不适合放在`Benchmark`方法中（不然这个压测方法就会变成测试服务端能承受的`建连`与`断连`的速度）。而且`client`有一些初始化和销毁的方法，它们都需要在特定的时间执行。对于这一点，JMH提供了一种参数传递client的解决方式。
-
-可以定义一个类`HttpClientProvider`如下
+这里的`初始化`与`清理`就非常适合用`@Setup`和`@TearDown`来实现，代码如下：
 
 ```java
-@State(Scope.BENCHMARK)
+@State(Scope.Benchmark)
 public static class HttpClientProvider {
     HttpClient client;
     
     @Setup(Level.Trial)
     public void init() {
-        client = HttpClient.custom().maxConnections(100).build();
+        HttpClientBuilder builder = HttpClients.custom();
+        builder.maxConnections(100);
+        client = builder.build();
     }
     
     @TearDown(Level.Trial)
@@ -192,11 +212,7 @@ public static class HttpClientProvider {
         client.close();
     }
 }
-```
 
-并写benchmark方法
-
-```java
 @Benchmark
 public void httpApi(HttpClientProvider provider) {
     GetMethod get = new GetMethod("http://example.com/foo/bar");
@@ -206,9 +222,33 @@ public void httpApi(HttpClientProvider provider) {
 }
 ```
 
-此时，JMH会在所有的测试执行之前先初始化一个`HttpClientProvider`实例，并调用它的`init()`方法进行初始化，然后一直用这个实例调用benchmark方法进行压测，所有压测都完成之后，再调用`destroy()`方法销毁client。
+此时，JMH会在所有的测试执行之前先初始化一个`HttpClientProvider`实例，并调用它的`init()`方法进行初始化，然后用这个实例调用benchmark方法进行压测，所有压测都完成之后，再调用`destroy()`方法销毁client。
 
+```plantuml
+participant "init thread" as init
+create provider
+init -> provider
+init -> provider: init
+==start to test==
+"thread-1" as t1 -> provider: httpApi(provider)
+"thread-2" as t2 -> provider: httpApi(provider)
+...all threads run benchmark with the same provider instance...
+t2 -> provider: httpApi(provider)
+t1 -> provider: httpApi(provider)
+==test finished, tear down==
+"destroy thread" -> provider: destroy
+```
 
+JMH的性能测试中执行的对象有不同粒度的概念，
+
+* `测试`（`Trial`）一个benchmark从启动到出结果数据
+* `迭代`（`Iteration`）一个测试中包含多次迭代，一般1秒一次迭代，每次迭代都会分别记数，最后用于统计
+* `调用`（`Invocation`）一次迭代中会多次调用被测方法
+
+`@Setup`方法和`@TearDown`方法可以不止在整个测试前后被调用，也可以在每次`迭代`前后被调用，或者甚至每次`benchmark方法被调用`前后被调用。这只需要为这些方法设置相应的`Level`参数即可。
+
+* `@Setup(Level.Trial)`只会在整个测试开始之前执行一次。
+* `@TearDown(Level.Iteration)`会在每次迭代完成时都执行一次。
 
 
 
