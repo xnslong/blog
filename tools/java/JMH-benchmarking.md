@@ -229,14 +229,22 @@ participant "init thread" as init
 create provider
 init -> provider
 init -> provider: init
+activate provider
+deactivate provider
 ==start to test==
-"thread-1" as t1 -> provider: httpApi(provider)
-"thread-2" as t2 -> provider: httpApi(provider)
+box "benchmark threads" 
+    participant "thread-1" as t1
+    participant "thread-2" as t2
+end box
+t1 -> provider: httpApi(provider)
+t2 -> provider: httpApi(provider)
 ...all threads run benchmark with the same provider instance...
 t2 -> provider: httpApi(provider)
 t1 -> provider: httpApi(provider)
 ==test finished, tear down==
 "destroy thread" -> provider: destroy
+activate provider
+deactivate provider
 ```
 
 JMH的性能测试中执行的对象有不同粒度的概念，
@@ -248,17 +256,139 @@ JMH的性能测试中执行的对象有不同粒度的概念，
 `@Setup`方法和`@TearDown`方法可以不止在整个测试前后被调用，也可以在每次`迭代`前后被调用，或者甚至每次`benchmark方法被调用`前后被调用。这只需要为这些方法设置相应的`Level`参数即可。
 
 * `@Setup(Level.Trial)`只会在整个测试开始之前执行一次。
+* `@TearDown(Level.Trial)`只会在整个测试完成时都执行一次。
+* `@Setup(Level.Iteration)`会在每次迭代开始时都执行一次。
 * `@TearDown(Level.Iteration)`会在每次迭代完成时都执行一次。
+* `@Setup(Level.Invocation)`会在每次benchmark方法调用开始时都执行一次。
+* `@TearDown(Level.Invocation)`会在每次benchmark方法调用完成时都执行一次。
+
+> `Level.Invocation`要慎用，因为它对测试结果的准确性可能会影响很大。
+
+Iteration级的`Setup`与`TearDown`的工作方式如下
+
+```plantuml
+participant "init thread" as init
+create provider
+init -> provider
+
+== iteration 1 ==
+init -> provider: init
+activate provider
+deactivate provider
+
+"Benchmark thread" as t1 -> provider: benchmark
+...
+t1 -> provider: benchmark
+
+"destroy thread" as destroyer -> provider: destroy
+activate provider
+deactivate provider
+
+== iteration 2 ==
+...all iterations...
+== iteration 10 ==
+
+init -> provider: init
+activate provider
+deactivate provider
+
+t1 -> provider: benchmark
+...
+t1 -> provider: benchmark
+
+destroyer -> provider: destroy
+activate provider
+deactivate provider
+
+== all iterations finished, test end ==
+```
+
+### JMH参数
+
+我们一般的benchmark测试的方式是将benchmark打成jar包，然后在一个无干扰的环境下测试。但是有些信息在测试代码打成jar包是不知道的，或者是不便写在代码中的。这些信息可以通过在执行的时候用参数传进去。比如我们要压测MySQL，那么MySQL的服务器地址，用户名密码这些信息，就可以在运行时传进去。相应的代码中只需要在带有`@State`注解的类中字段上加上`@Param`注解即可。
+
+```java
+@State(Scope.Thread)
+public static class MySqlConnection {
+    @Param("localhost")
+    String mysqlServer;
+    @Param("root")
+    String mysqlUser;
+    @Param("password")
+    String mysqlPassword;
+    
+    Connection conn;
+    
+    @Setup(Level.Trial)
+    public void init() {
+        Class.forName("com.mysql.jdbc.Driver");
+        conn = Driver.getConnection("jdbc:mysql://" + mysqlServer, mysqlUser, mysqlPassword);
+    }
+    
+    @TearDown
+    public void destroy() {
+        conn.close();
+    }
+}
+```
+
+它执行的时候结果如下
 
 
+```
+Benchmark              (mysqlPassword)   (mysqlServer)  (mysqlUser)    Mode       Cnt      Score     Error  Units
+MysqlBenchmark.test           password       localhost         root   thrpt       200  56414.767 ± 893.774  ops/s
+```
+
+我们可以看到报告中多了几列括号`()`括起来的列，它们就是这里上面代码中设置的参数，列名就是带`@Param`注解的字段名。这些字段其实可以在执行`benchmarks.jar`的时候再指定进去的，详细情况见[benchmark启动方式](#benchmark启动方式)。这种就特别适合写代码与环境准备并行进行。
 
 ## 性能比较
 
+掌握了以上的内容，我们就可以用`JMH`来做很多性能测试了，包括测一些简单的工具类，到测一个复杂的服务或者系统。但是一般一个测试只能得到一个数据，我们并不能知道这个数据是好还是不好。比如在某个特定的测试环境下，调用某工具类的一个方法的OPS是`1,000,000`，我们还是不知道这个结果是可以让人欢欣鼓舞，还是需要忧虑性能问题。知道一个性能好坏的方法就是——比较。
+
+比如我们不知道正则表达式的编译对我们会造成多大的影响，那么我们就可以写一组对比的压测：
+
+
+```java
+public static final String IP_PATTERN = "[0-9]{1,3}(\\.[0-9]{1,3}){3}";
+
+@State(Scope.Benchmark)
+public static class PatternProvider {
+    Pattern pattern;
+
+    @Setup(Level.Trial)
+    public void init() {
+        pattern = Pattern.compile(IP_PATTERN);
+    }
+}
+
+@Benchmark
+public void preCompiled(PatternProvider provider) {
+    provider.pattern.matcher("1.2.3.4").matches();
+}
+
+@Benchmark
+public void matchDirectly() {
+    Pattern.matches(IP_PATTERN, "1.2.3.4");
+}
+```
+
+我们将会看到它执行的结果，如下
+
+
+```
+Benchmark                      Mode  Cnt         Score         Error  Units
+RegExBenchmark.matchDirectly  thrpt    5   1782915.260 ±   22102.033  ops/s
+RegExBenchmark.preCompiled    thrpt    5   6093182.290 ±  172088.745  ops/s
+```
+
+我们可以看到用正责表达式匹配时，预编译的性能是临时编译的`3.42`倍。有比较就有优劣，这个结果一般对于我们选择架构的设计，代码的写法等方面，具有非常重要的指导意义。我们需要做的就是针对我们的使用方式，设计合理的对照实验。
+
 ## benchmark启动方式
 
-执行的方法有3种：
+Benchmark的执行是由`Runner.run()`方法启动的。所以理论上只要能启动`Runner.run()`方法，我们就能启动benchmark。一般有3种方式
 
-1. 编写main方法启动执行，如下：
+1. 直接编写main方法启动执行，如下，这种方式特别适合在编写测试代码时使用
 
     ```java
     public static void main(String[] args) throws Exception {
@@ -269,6 +399,38 @@ JMH的性能测试中执行的对象有不同粒度的概念，
         new Runner(options).run();
     }
     ```
-2. 安装JMH插件，此时在IDE中就可以像执行单元测试那样执行这个Benchmark。
-3. 先用maven打包，然后用`java -jar benchmarks.jar`的方式执行这些测试用例。
+
+2. 先用maven打包，然后用`java -jar benchmarks.jar`的方式执行这些测试用例。（实际是执行JMH自带的主类`org.openjdk.jmh.Main`）
+
+    这个主类提供了从命令行参数设置benchmark信息的手段，功能很强大，所以benchmark一般直接使用这个主类（官方archetype生成的工程就会把这个类设置成主类）。比如可以通过`-f <n>`设置benchmark启动的子进程次数，`-i <n>`设置测试的迭代次数等等，具体的可以通过`-h`参数查看所有选项。不过有几点常用的控制项
+    
+    参数格式是
+    
+    ```
+    java -jar benchmarks.jar match [options]
+    ```
+    
+    其中的`match`是正则表达式，它会把所有的`benchmark`名字都用这里指定的正责表达式去匹配，如果能查找到匹配的子串，那么相应的benchmark就会被执行。这个功能特别合适在包含了很多benchmark的jar包中执行某一个特定的测试。
+    
+    具体一个benchmarks的jar包中包含了哪些jar包，可以用`-l`参数查看，比如
+    
+    ```
+    Benchmarks: 
+    benchmark.demo.RegExBenchmark.matchDirectly
+    benchmark.demo.RegExBenchmark.preCompiled
+    ```
+    
+    还可以用`-lp`参数查看，不仅可以查看benchmark列表，还可以查看相应的参数
+    
+    ```
+    Benchmarks: benchmark.demo.RegExBenchmark.matchDirectly
+      param "ip" = {1.2.3.4, 1.2.3.x}
+    benchmark.demo.RegExBenchmark.preCompiled
+      param "ip" = {1.2.3.4, 1.2.3.x}
+    ```
+    
+    不使用`-h`, `-l`, `-lp`时，就可以执行benchmark了。有一堆参数可以控制执行中的种种行为，比如起多少个进程，多少个线程，预热多少次迭代，实际测试跑多少次迭代，结果输出为什么格式，输出来什么地方等等，这些都可以用`-h`参数查看。
+
+3. 安装JMH插件，此时在IDE中就可以像执行单元测试那样执行这个Benchmark。它实际的实现机制就是调用`org.openjdk.jmh.Main`
+
 
