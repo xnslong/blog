@@ -198,27 +198,27 @@ NumberTestBenchmark.isNumber  thrpt   20  101670189.150 ± 1728020.035  ops/s
 ```java
 @State(Scope.Benchmark)
 public static class HttpClientProvider {
-    HttpClient client;
-    
+    CloseableHttpClient client;
+
     @Setup(Level.Trial)
     public void init() {
         HttpClientBuilder builder = HttpClients.custom();
-        builder.maxConnections(100);
+        builder.setMaxConnTotal(100);
         client = builder.build();
     }
-    
+
     @TearDown(Level.Trial)
-    public void destroy() {
+    public void destroy() throws IOException {
         client.close();
     }
 }
 
 @Benchmark
-public void httpApi(HttpClientProvider provider) {
-    GetMethod get = new GetMethod("http://example.com/foo/bar");
-    HttpResponse resp = provider.client.execute(get);
-    EntityUtils.consume(resp.getEntity());
-    resp.close();
+public void httpApi(HttpClientProvider provider) throws IOException {
+    HttpGet get = new HttpGet("http://example.com/foo/bar");
+    try (CloseableHttpResponse resp = provider.client.execute(get)) {
+        EntityUtils.consume(resp.getEntity());
+    }
 }
 ```
 
