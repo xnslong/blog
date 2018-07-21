@@ -146,11 +146,9 @@ NumberTestBenchmark.testNumber  thrpt   20  101670189.150 ± 1728020.035  ops/s
 * 测试完成之后，我们会看到该次测试的一个结果汇总，包含`均值`、`最大值`、`最小值`、`标准偏差`、`99.9%置信区间`这些信息。
 * 最后再打印一个格式良好的报告，说明本次测试的结果。
 
-这就是一个简单压测的完整过程，我们可以看到，我们只需要做非常少量的工作即可完成压测，这对于压测任务简单化有非常大的帮助。
+这就是一个简单压测的完整过程，我们可以看到，我们只需要做非常少量的工作即可完成压测，这对于压测任务简单化有非常大的帮助。但是JMH的功能远不止如下，下面将介绍更多特性。
 
-# 高级特性
-
-## 耗时统计
+# 耗时统计
 
 JMH除了可以统计`吞吐量`外，还可以统计`响应时间`。相应的方法是，在benchmark方法上增加`@BenchmarkMode`注解，说明要统计哪些量（即benchmark的模式）。benchmark的模式一共有4种：
 
@@ -349,7 +347,7 @@ NumberTestBenchmark.testNumber:testNumber·p1.00    sample           0.003      
 
 这个benchmark执行过程与吞吐量的很像，但是每次迭代统计的量不一样，最终结果中它还统计了一个耗时的分布情况。
 
-## benchmark方法自定义参数
+# benchmark方法自定义参数
 
 前面我们看到的JMH的benchmark方法是无参的，其实它是可以支持参数的。测试的很多场景都非常需要这个功能的，比如我们测试过程中的每次迭代中的所有benchmark方法的执行需要使用同一个对象，这时这个对象就需要在测试方法执行前统一初始化，再用参数的方式给测试方法，让它的每次执行都使用同一个对象。
 
@@ -370,7 +368,7 @@ public class AtomicIntegerBenchark {
 }
 ```
 
-### 带有`@State`注解的自定义类型
+## 带有`@State`注解的自定义类型
 
 JMH的benchmark方法可以传递参数，但是它要求它的类型必需定义了`@State(Scope.XXXX)`注解类型，该注解注明它的作用范围。这样JMH就知道需要什么时候创建一个的实例，时benchmark方法的各次调用怎么共享这个实例。`@State`中的`Scope`参数有3个值
 
@@ -411,7 +409,7 @@ JMH的benchmark方法可以传递参数，但是它要求它的类型必需定�
 
 > 如果需要传递给benchmark方法的参数类型并没有定义`@State`注解（比如之前的例子中测试方法需要的是`AtomicInteger`类型的参数，但是`AtomicInteger`类型上并没有定义`@State`注解）。这种情况下我们可以定义一些`XxxProvider`的类型，通过该类型来引用我们期望的目标类型，此时我们可以很简单的往这类`XxxProvider`类型上添加`@State`注解。
 
-### 自定义类的`@Setup`与`@TearDown`方法注解
+## 自定义类的`@Setup`与`@TearDown`方法注解
 
 带有`@State`注解的类型有时候需要做一些初始化和销毁的工作。比如测试MySQL性能时，需要建立MySQL连接、关闭MySQL连接。这时我可以把这些初始化和销毁的逻辑分别定义成这个类的成员方法，并在方法上面添加`@Setup`和`@TearDown`注解来实现，这样JMH就会自动在测试前后去调用带这些注解的方法，从而实现初始化和销毁的效果。它们的功能与`JUnit`中的`Before`和`After`很像，会在测试任务执行前后执行。比如刚才的MySQL，就可以使用如下代码：
 
@@ -463,6 +461,16 @@ public class MySQLBenchmark {
 > `Level.Invocation`要慎用，因为它对测试结果的准确性可能会影响很大。
 
 ```plantuml
+skinparam shadowing true
+skinparam monochrome false
+skinparam sequenceArrowColor darkRed
+skinparam sequenceBorderColor darkRed
+skinparam sequenceLifeLineBorderColor darkRed
+skinparam sequenceParticipantBorderColor darkRed
+skinparam sequenceParticipantBackgroundColor lightyellow
+skinparam sequenceBoxLineColor darkRed
+
+
 participant "init thread" as init
 create "XxxProvider" as provider
 init -> provider
@@ -511,7 +519,7 @@ deactivate provider
 
 每个注解的方法也都可以出现多次，`@Setup`与`@TearDown`没有配对的关系。
 
-### JMH参数
+## JMH参数
 
 一般的benchmark测试的方式是将benchmark打成jar包，然后在一个无干扰的环境下用命令行启动测试。但是有些信息在测试代码打成jar包前是不知道的，或者是不便写在代码中，执行时需要临时设置或者改变的。这些信息可以通过在执行的时候用参数传进去。比如我们要压测MySQL，那么MySQL的服务器地址，用户名密码这些信息，就可以在运行时传进去。相应的代码中只需要在`@State`注解的类中加上`@Param`注解的字段即可。
 
@@ -553,7 +561,7 @@ MySQLBenchmark.test           password       localhost         root   thrpt     
 我们可以看到报告中多了几列括号`()`括起来的列，它们就是这里上面代码中设置的参数，列名就是带`@Param`注解的字段名。执行`benchmarks.jar`的时候，可以通过`-p param=value1,value2,...`的方式来指定参数，比如`-p mysqlServer=localhost:3306 -p mysqlUser=test_user`。
 详细情况见[benchmark启动方式](#benchmark启动方式)。
 
-## 性能比较
+# 性能比较
 
 掌握了以上的内容，我们就可以用`JMH`来做很多性能测试了，包括测一些简单的工具包的性能测试，到复杂的服务或者系统的性能测试。一般一个测试都能得到一些绝对的数据，比如方法的OPS是多少，方法的耗时是多少。但是面对一个绝对数据，其实我们并不能确定性能好不好（如果同类能有它`10`倍的性能，那么他的性能就不算好；如果同类的性能最高只能达到它的`1/10`，那么它的性能就是非常好了），只有比较了，才能确定性能是不是真好。
 
@@ -606,11 +614,11 @@ RegExBenchmark.rawCompile     thrpt    5  2416370.706 ±   36911.292  ops/s
 
 有比较才有优劣，比较结果一般对于我们选择架构的设计，代码的写法等方面，具有非常重要的指导意义。所以我们要经常地做一些性能比较，来做各方面的取舍。对于比较的工作，我们需要做的就是针对使用方式，设计合理的对照实验。
 
-## benchmark启动方式
+# benchmark启动方式
 
 JMH中有一个`Runner`类，Benchmark的执行是由`Runner.run()`方法启动的。所以理论上只要能启动`Runner.run()`方法，我们就能启动benchmark。一般有3种方式
 
-### 写main启动测试
+## 写main启动测试
 
 直接编写main方法启动执行，如下，这种方式适合在编写测试代码时使用
 
@@ -624,7 +632,7 @@ public static void main(String[] args) throws Exception {
 }
 ```
 
-### archetype创建的工程，直接打包运行
+## archetype创建的工程，直接打包运行
 
 [快速开始](#快速编写一个JMH性能测试程序)中介绍了用JMH提供的archetype创建工程的方式，这种方式创建的工程是可以直接打包成一个可以执行的JAR包的(benchmarks.jar)，它打成的jar的启动类是`org.openjdk.jmh.Main`。这个主类提供了非常丰富的参数，让我们可以非常清晰的查看benchmark信息，非常自由的控制benchmark参数，功能很强大，所以benchmark一般直接使用这个主类（官方archetype生成的工程就会把这个类设置成主类）。
 
@@ -698,11 +706,11 @@ public class XxxBenchmark {
 
 > 将测试程序打成jar包，然后用`java -jar benchmarks.jar`启动，这种启动方式是最常见的。这是因为IDE等程序可能会干扰测试结果的准确性，这种启动方式则基本不受IDE影响。
 
-### JMH插件启动
+## JMH插件启动
 
 安装JMH插件，此时在IDE中就可以像执行单元测试那样执行这个Benchmark，在性能测试程序开发的时候特别有用。它实际的实现机制也是启动主类`org.openjdk.jmh.Main`，可用的参数与第`2`种方式相同。
 
-## 性能排查
+# 性能排查
 
 此前介绍的JMH使用方式可以让我们知道一段代码是否有性能问题。但是确认有性能问题之后，我们下一步就是要排查性能问题，解决性能问题。JMH提供了很多profile工具，可以帮助我们分析代码性能问题点。比如可以用`GCProfiler`排查方法的`GC`问题，用`StackProfiler`排查方法的慢步骤等问题。所有可用的profiler可以通过`-lprof`查看
 
@@ -733,7 +741,7 @@ Unsupported profilers:
 [Cannot run program "xperf": error=2, No such file or directory]
 ```
 
-### 慢步骤分析
+## 慢步骤分析
 
 统计长耗时步骤，我们可以统计线程栈的频率，如果一个步骤耗时高，那么它存在的时间就会长，相应被统计到的频率也就会很高。统计线程栈频率，我也可以用`-prof stack`参数来实现。比如我们有如下一个有性能问题的方法
 
