@@ -357,14 +357,16 @@ NumberTestBenchmark.testNumber:testNumber·p1.00    sample           0.003      
 
 
 ```java
-@State(Scope.Benchmark)
-public static class AtomicIntegerProvider {
-    AtomicInteger integer = new AtomicInteger();
-}
-    
-@Benchmark
-public void incr(AtomicIntegerProvider provider) {
-    provider.integer.incrementAndGet();
+public class AtomicIntegerBenchark {
+    @State(Scope.Benchmark)
+    public static class AtomicIntegerProvider {
+        AtomicInteger integer = new AtomicInteger();
+    }
+        
+    @Benchmark
+    public void incr(AtomicIntegerProvider provider) {
+        provider.integer.incrementAndGet();
+    }
 }
 ```
 
@@ -668,15 +670,137 @@ java -jar benchmarks.jar match [options]
    * `-i`测试的迭代次数
    * `-wi`预热的迭代次数
    * `-p`设置参数
+   * `-prof`设置profile
    * `-o`输出到指定文件，而非标准输出
    * `-rff`测试结果写到指定文件，而非标准输出
    * `-rf`测试结果使用指定的格式，而非默认格式
     
+这些参数对benchmark的控制，大多数都可以通过在benchmark方法或者类上加注解或者代码实现，比如`-f 1`就可以通过添加注解`@Fork(1)`来实现，如下：
+
+```java
+// 在benchmark类上添加 @Fork 注解，
+// 该类中的所有benchmark方法都会默认应用这个设置，只启一个子进程。
+@Fork(1)
+public class XxxBenchmark {
+    ...
     
+    // 在benchmark方法上添加 @Fork 注解，
+    // 那么该方法会使用自定义的这个设置，它会启2个子进程，而不是一个。
+    @Fork(2)
+    @Benchmark
+    public void testXxx() {
+        ...
+    }
+}
+```    
+
+但是当相应的benchmark上有了注解，同时又通过参数设置了，那么相应的值以参数设置优先。比如这儿启动命令是`java -jar target/benchmarks.jar XxxBenchmark -f 5`，那么它将无视`XxxBenchmark`的类与benchmark方法上所设置的`@Fork`注解，而是按照参数`-f 5`的指定启5个子进程。
+
 > 将测试程序打成jar包，然后用`java -jar benchmarks.jar`启动，这种启动方式是最常见的。这是因为IDE等程序可能会干扰测试结果的准确性，这种启动方式则基本不受IDE影响。
 
 ### JMH插件启动
 
 安装JMH插件，此时在IDE中就可以像执行单元测试那样执行这个Benchmark，在性能测试程序开发的时候特别有用。它实际的实现机制也是启动主类`org.openjdk.jmh.Main`，可用的参数与第`2`种方式相同。
 
+## 性能排查
+
+此前介绍的JMH使用方式可以让我们知道一段代码是否有性能问题。但是确认有性能问题之后，我们下一步就是要排查性能问题，解决性能问题。JMH提供了很多profile工具，可以帮助我们分析代码性能问题点。比如可以用`GCProfiler`排查方法的`GC`问题，用`StackProfiler`排查方法的慢步骤等问题。所有可用的profiler可以通过`-lprof`查看
+
+```bash
+$ java -jar target/benchmarks.jar -lprof
+Supported profilers:
+          cl: Classloader profiling via standard MBeans
+        comp: JIT compiler profiling via standard MBeans
+   dtraceasm: DTrace profile provider + PrintAssembly Profiler
+          gc: GC profiling via standard MBeans
+       hs_cl: HotSpot (tm) classloader profiling via implementation-specific MBeans
+     hs_comp: HotSpot (tm) JIT compiler profiling via implementation-specific MBeans
+       hs_gc: HotSpot (tm) memory manager (GC) profiling via implementation-specific MBeans
+       hs_rt: HotSpot (tm) runtime profiling via implementation-specific MBeans
+      hs_thr: HotSpot (tm) threading subsystem via implementation-specific MBeans
+      pauses: Pauses profiler
+  safepoints: Safepoints profiler
+       stack: Simple and naive Java stack profiler
+
+Unsupported profilers:
+        perf: <none>
+[Cannot run program "perf": error=2, No such file or directory]
+     perfasm: <none>
+[Cannot run program "perf": error=2, No such file or directory]
+    perfnorm: <none>
+[Cannot run program "perf": error=2, No such file or directory]
+    xperfasm: <none>
+[Cannot run program "xperf": error=2, No such file or directory]
+```
+
+### 慢步骤分析
+
+统计长耗时步骤，我们可以统计线程栈的频率，如果一个步骤耗时高，那么它存在的时间就会长，相应被统计到的频率也就会很高。统计线程栈频率，我也可以用`-prof stack`参数来实现。比如我们有如下一个有性能问题的方法
+
+```java
+public class PerfDemo {
+    public static void withPerfProblem() throws Exception {
+        Thread.sleep(1);
+    }
+}
+```
+
+它的benchmark结果如下：
+
+```
+...
+Result "benchmark.demo.PerfBenchmark.test":
+  737.602 ±(99.9%) 49.631 ops/s [Average]
+  (min, avg, max) = (725.075, 737.602, 752.622), stdev = 12.889
+  CI (99.9%): [687.970, 787.233] (assumes normal distribution)
+
+Secondary result "benchmark.demo.PerfBenchmark.test:·stack":
+Stack profiler:
+
+....[Thread state distributions]....................................................................
+ 98.9%         TIMED_WAITING
+  1.1%         RUNNABLE
+
+....[Thread state: TIMED_WAITING]...................................................................
+ 98.9% 100.0% java.lang.Thread.sleep
+
+....[Thread state: RUNNABLE]........................................................................
+  0.5%  40.0% java.lang.Thread.sleep
+  0.2%  20.0% java.util.concurrent.locks.ReentrantLock$NonfairSync.tryAcquire
+  0.2%  20.0% java.lang.Thread.currentThread
+  0.2%  20.0% sun.reflect.Reflection.getClassAccessFlags
+
+
+
+# Run complete. Total time: 00:00:10
+
+Benchmark                   Mode  Cnt    Score    Error  Units
+PerfBenchmark.test         thrpt    5  737.602 ± 49.631  ops/s
+PerfBenchmark.test:·stack  thrpt           NaN             ---
+```
+
+结果显示栈顶有`98.9%`的频率都是`java.lang.Thread.sleep`，也就意味着是这个方法导致变慢，这样就能很简单找到问题原因了。但是如果想知道问题代码在什么地方，我们可以把栈的行数增加一些，比如设置`-prof stack:lines=10`参数，增加到`10`行，这样统计的就是从栈顶往下10行的整个栈出现的频率，此时我们可以在结果中看到下面的结果
+
+```
+Secondary result "benchmark.demo.PerfBenchmark.test:·stack":
+Stack profiler:
+
+....[Thread state distributions]....................................................................
+ 98.6%         TIMED_WAITING
+  1.4%         RUNNABLE
+
+....[Thread state: TIMED_WAITING]...................................................................
+ 98.6% 100.0% java.lang.Thread.sleep
+              benchmark.utils.PerfDemo.withPerfProblem
+              benchmark.demo.PerfBenchmark.test
+              benchmark.demo.generated.PerfBenchmark_test_jmhTest.test_thrpt_jmhStub
+              benchmark.demo.generated.PerfBenchmark_test_jmhTest.test_Throughput
+              sun.reflect.NativeMethodAccessorImpl.invoke0
+              sun.reflect.NativeMethodAccessorImpl.invoke
+              sun.reflect.DelegatingMethodAccessorImpl.invoke
+              java.lang.reflect.Method.invoke
+              org.openjdk.jmh.runner.BenchmarkHandler$BenchmarkTask.call
+```
+
+这就是我们所关心的出现频率`98.6%`的栈，此时我们能很轻易发现它是在代码的什么地方，然后我们就可以针对性的去解决性能问题了。
 
