@@ -461,6 +461,16 @@ public class MySQLBenchmark {
 > `Level.Invocation`要慎用，因为它对测试结果的准确性可能会影响很大。
 
 ```plantuml
+skinparam shadowing true
+skinparam monochrome false
+skinparam sequenceArrowColor darkRed
+skinparam sequenceBorderColor darkRed
+skinparam sequenceLifeLineBorderColor darkRed
+skinparam sequenceParticipantBorderColor darkRed
+skinparam sequenceParticipantBackgroundColor lightyellow
+skinparam sequenceBoxLineColor darkRed
+
+
 participant "init thread" as init
 create "XxxProvider" as provider
 init -> provider
