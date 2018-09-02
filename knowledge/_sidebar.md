@@ -1,2 +1,1 @@
-* 通用知识
-    * [掌握所有语言——语言特性](knowledge/language/language-features-are-import.md)
+* [如何掌握所有语言——语言特性](knowledge/language-features-are-important.md)
