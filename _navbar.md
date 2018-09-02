@@ -1,3 +1,3 @@
 * [Home](/)
 * [Tools](/tools/)
-* [Knowleges](/knowledge/)
+* [Knowledge](/knowledge/)
